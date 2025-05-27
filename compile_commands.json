@@ -1,0 +1,13 @@
+[
+    {
+        "directory": "/home/laurin/code/fenster",
+        "arguments": [
+            "/usr/bin/gcc",
+            "-Wall",
+            "-Wextra",
+            "-Wpedantic",
+            "main.c"
+        ],
+        "file": "main.c"
+    }
+]
