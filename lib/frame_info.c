@@ -33,13 +33,19 @@ void advance_frame_info_buffer(struct FrameInfoBuffer *b) {
 
 int64_t average_active_time(struct FrameInfoBuffer *b) {
   int64_t total_active_time = 0;
+  uint16_t count = 0;
   for (uint16_t i = 0; i < b->length; i++) {
     if (i == b->current_frame_index)
       continue;
-
+    if (b->frame_info[i].start == -1 || b->frame_info[i].end == -1)
+      continue;
+    count++;
     total_active_time += b->frame_info[i].end - b->frame_info[i].start;
   }
-  return total_active_time / b->length;
+  if (count == 0) {
+    return 0;
+  }
+  return total_active_time / count;
 }
 
 int64_t average_fps(struct FrameInfoBuffer *b) {
