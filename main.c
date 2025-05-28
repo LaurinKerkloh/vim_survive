@@ -17,12 +17,12 @@
 
 #define INPUT_BUFFER_SIZE 20
 #define OUTPUT_BUFFER_SIZE 16384
-#define GAME_WIDTH 30
+#define GAME_WIDTH 60
 #define GAME_HEIGHT 30
 
 #define CTRL_KEY(k) ((k) & 0x1f)
 #define ESC 27
-#define BLOCK 0x88
+#define FULL_BLOCK "\xE2\x96\x88"
 struct Point {
   int32_t x;
   int32_t y;
@@ -110,17 +110,44 @@ void set_screen_size(void) {
   screen_size.x = 0;
   screen_size.y = 0;
 
-  sscanf(in, "[%hd;%hd", &screen_size.y, &screen_size.x);
+  sscanf(in, "[%d;%d", &screen_size.y, &screen_size.x);
 
   set_non_blocking_input();
 }
 
 ///////////////////////////////////////////////
+struct FrameInfo recent_frames_data[RECENT_FRAMES_SIZE];
+struct FrameInfoBuffer frame_info;
+
+char input_buffer[20];
+char last_input[sizeof(input_buffer) + 1];
+
 void clear_screen(void) { printf("\033[2J\033[1;1H"); }
 
 void move_cursor_point(struct Point p) { printf("\033[%d;%dH", p.y, p.x); }
 void move_cursor(uint16_t x, uint16_t y) { printf("\033[%d;%dH", y, x); }
 
+void print_frame_info(void) {
+  move_cursor(screen_size.x - 8, 1);
+  printf("FPS :%4ld", average_fps(&frame_info));
+  move_cursor(screen_size.x - 8, 2);
+  printf("Load:%3ld%%", average_active_time(&frame_info) * 100 / FRAME_TIME);
+}
+void print_input_info(void) {
+  move_cursor(1, 1);
+
+  printf("Last Input: ");
+  for (uint8_t i = 0; i < sizeof(last_input); i++) {
+    if (last_input[i] == '\0') {
+      break;
+    }
+    if (isprint(last_input[i])) {
+      printf("%d (%c) ", last_input[i], last_input[i]);
+    } else {
+      printf("%d ", last_input[i]);
+    }
+  }
+}
 ////////////////
 // Game State //
 ////////////////
@@ -134,13 +161,13 @@ bool set_game_offset(void) {
   if (level_size.x * 2 > screen_size.x || level_size.y > screen_size.y) {
     return false;
   }
-  game_offset.x = screen_size.x / 2 - level_size.x;
+  game_offset.x = screen_size.x / 2 - level_size.x / 2;
   game_offset.y = screen_size.y / 2 - level_size.y / 2;
   return true;
 }
 
 struct Point game_point_to_terminal(struct Point game) {
-  struct Point p = {game_offset.x + game.x * 2, game_offset.y + game.y};
+  struct Point p = {game_offset.x + game.x, game_offset.y + game.y};
   return p;
 }
 
@@ -157,7 +184,7 @@ void draw_border(void) {
       if (x == -1 || x == level_size.x + 1 || y == -1 ||
           y == level_size.y + 1) {
         move_cursor_game(x, y);
-        printf("██");
+        printf(FULL_BLOCK);
       }
     }
   }
@@ -178,13 +205,10 @@ int main(void) {
   fflush(stdout);
   sleep(2);
 
-  struct FrameInfo recent_frames_data[RECENT_FRAMES_SIZE];
-  struct FrameInfoBuffer frame_info =
+  frame_info =
       initialize_frame_info_buffer(recent_frames_data, RECENT_FRAMES_SIZE);
 
   bool exited = false;
-  char input_buffer[20];
-  char last_input[sizeof(input_buffer) + 1];
 
   while (!exited) {
     frame_info.current_frame->start = now();
@@ -216,26 +240,9 @@ int main(void) {
     clear_screen();
     draw_border();
 
-    // Frame info
-    move_cursor(screen_size.x - 8, 1);
-    printf("FPS :%4ld", average_fps(&frame_info));
-    move_cursor(screen_size.x - 8, 2);
-    printf("Load:%3ld%%", average_active_time(&frame_info) * 100 / FRAME_TIME);
+    print_frame_info();
 
-    // Input info
-    move_cursor(1, 1);
-
-    printf("Last Input: ");
-    for (uint8_t i = 0; i < sizeof(last_input); i++) {
-      if (last_input[i] == '\0') {
-        break;
-      }
-      if (isprint(last_input[i])) {
-        printf("%d (%c) ", last_input[i], last_input[i]);
-      } else {
-        printf("%d ", last_input[i]);
-      }
-    }
+    print_input_info();
 
     fflush(stdout);
 
