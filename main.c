@@ -16,6 +16,8 @@
 #define RECENT_FRAMES_SIZE FPS
 
 #define INPUT_BUFFER_SIZE 20
+#define INPUT_CHAIN_SIZE 6
+#define COMMAND_CHAIN 10
 #define OUTPUT_BUFFER_SIZE 16384
 #define GAME_WIDTH 60
 #define GAME_HEIGHT 30
@@ -78,8 +80,8 @@ struct Vector screen_size;
 struct FrameInfo recent_frames_data[RECENT_FRAMES_SIZE];
 struct FrameInfoBuffer frame_info;
 
-char input_buffer[20];
-char last_input[sizeof(input_buffer) + 1];
+char input_buffer[INPUT_BUFFER_SIZE];
+char last_input[INPUT_BUFFER_SIZE];
 
 //////////////////////////////
 // TERMINAL AND IO SETTINGS //
@@ -164,6 +166,8 @@ void set_screen_size(void) {
 
 ///////////////////////////////////////////////
 
+char input_chain[INPUT_CHAIN_SIZE];
+
 void clear_screen(void) { printf("\033[2J\033[1;1H"); }
 
 void move_cursor_vector(struct Vector v) { printf("\033[%d;%dH", v.y, v.x); }
@@ -175,25 +179,13 @@ void print_frame_info(void) {
   move_cursor(screen_size.x - 8, 2);
   printf("Load:%3ld%%", average_active_time(&frame_info) * 100 / FRAME_TIME);
 }
-void print_input_info(void) {
-  move_cursor(1, 1);
 
-  printf("Last Input: ");
-  for (uint8_t i = 0; i < sizeof(last_input); i++) {
-    if (last_input[i] == '\0') {
-      break;
-    }
-    if (isprint(last_input[i])) {
-      printf("%d (%c) ", last_input[i], last_input[i]);
-    } else {
-      printf("%d ", last_input[i]);
-    }
-  }
-}
 ////////////////
 // Game State //
 ////////////////
 
+bool exited = false;
+bool command_mode = false;
 struct Vector level_size = {GAME_WIDTH, GAME_HEIGHT};
 struct Vector game_offset;
 
@@ -277,7 +269,7 @@ struct Vector add_vector(struct Vector a, struct Vector b) {
 }
 
 bool out_off_bounds(struct Vector v) {
-  return (v.x < 0 || v.x > GAME_WIDTH - 1 || v.y < 0 || v.y > GAME_HEIGHT - 1);
+  return (v.x < 0 || v.x > GAME_WIDTH || v.y < 0 || v.y > GAME_HEIGHT);
 }
 
 bool try_player_move(struct Vector vector) {
@@ -287,6 +279,130 @@ bool try_player_move(struct Vector vector) {
   }
   player.position = new_location;
   return true;
+}
+
+int input_chain_end_index(void) {
+  for (int i = 0; i < INPUT_CHAIN_SIZE; i++) {
+    if (input_chain[i] == '\0') {
+      return i;
+    }
+  }
+  return -1;
+}
+
+int shift_input_chain(void) {
+  if (input_chain[0] == '\0') {
+    return 0;
+  }
+  for (int i = 1; i < INPUT_CHAIN_SIZE; i++) {
+    input_chain[i - 1] = input_chain[i];
+    if (input_chain[i] == '\0') {
+      return i - 1;
+    }
+  }
+  return -1;
+}
+
+void add_to_input_chain(char c) {
+  int end_index = input_chain_end_index();
+  if (end_index >= INPUT_CHAIN_SIZE - 1) {
+    end_index = shift_input_chain();
+  }
+  input_chain[end_index] = c;
+  input_chain[end_index + 1] = '\0';
+}
+
+void clear_input_chain(void) { input_chain[0] = '\0'; }
+
+void read_input(void) {
+  ssize_t read_bytes =
+      read(STDIN_FILENO, input_buffer, sizeof(input_buffer) - 1);
+  if (read_bytes <= 0) {
+    input_buffer[0] = '\0';
+  }
+  for (ssize_t i = 0; i < read_bytes; i++) {
+    last_input[i] = input_buffer[i];
+    last_input[i + 1] = '\0';
+  }
+}
+
+void process_input(void) {
+  for (ssize_t i = 0; input_buffer[i] != '\0'; i++) {
+    if (isdigit(input_buffer[i])) {
+      add_to_input_chain(input_buffer[i]);
+    } else {
+      switch (input_buffer[i]) {
+      case CTRL_KEY('r'):
+        set_screen_size();
+        break;
+      case CTRL_KEY('q'):
+        exited = true;
+        break;
+      case 'h':
+        try_player_move(vector_from_direction(LEFT, 1));
+        break;
+      case 'j':
+        try_player_move(vector_from_direction(DOWN, 1));
+        break;
+      case 'k':
+        try_player_move(vector_from_direction(UP, 1));
+        break;
+      case 'l':
+        try_player_move(vector_from_direction(RIGHT, 1));
+        break;
+      case ':':
+        command_mode = true;
+        break;
+      case ESC: // escape char
+        switch (input_buffer[i + 1]) {
+        case '[':
+          break;
+        default: // ESC pressed
+          clear_input_chain();
+          break;
+        }
+      }
+    }
+  }
+}
+
+void process_command_input(void) {
+  for (ssize_t i = 0; input_buffer[i] != '\0'; i++) {
+    switch (input_buffer[i]) {
+    case 'q':
+      exited = true;
+      break;
+    case ESC: // escape char
+      switch (input_buffer[i + 1]) {
+      case '[':
+        break;
+      default: // ESC pressed
+        command_mode = false;
+        break;
+      }
+    }
+  }
+}
+
+void print_input_info(void) {
+  move_cursor(1, 1);
+
+  printf("Last Input: ");
+  for (uint8_t i = 0; i < sizeof(last_input); i++) {
+    if (last_input[i] == '\0') {
+      break;
+    }
+    if (isprint(last_input[i])) {
+      printf("%d (%c) ", last_input[i], last_input[i]);
+    } else {
+      printf("%d ", last_input[i]);
+    }
+  }
+
+  move_cursor(1, 2);
+  printf("Chain length: %d", input_chain_end_index());
+  move_cursor(1, 3);
+  printf("Chain: %s", input_chain);
 }
 
 int main(void) {
@@ -307,52 +423,25 @@ int main(void) {
   frame_info =
       initialize_frame_info_buffer(recent_frames_data, RECENT_FRAMES_SIZE);
 
-  bool exited = false;
-
   while (!exited) {
     frame_info.current_frame->start = now();
-
-    // Process input
-    ssize_t read_bytes =
-        read(STDIN_FILENO, input_buffer, sizeof(input_buffer) - 1);
-    input_buffer[read_bytes] = '\0';
-    for (ssize_t i = 0; i < read_bytes; i++) {
-      last_input[i] = input_buffer[i];
-      last_input[i + 1] = '\0';
-
-      switch (input_buffer[i]) {
-      case CTRL_KEY('r'):
-        set_screen_size();
-        break;
-      case 'h':
-        try_player_move(vector_from_direction(LEFT, 1));
-        break;
-      case 'j':
-        try_player_move(vector_from_direction(DOWN, 1));
-        break;
-      case 'k':
-        try_player_move(vector_from_direction(UP, 1));
-        break;
-      case 'l':
-        try_player_move(vector_from_direction(RIGHT, 1));
-        break;
-      case ESC: // escape char
-        switch (input_buffer[i + 1]) {
-        case '[':
-          break;
-        default: // ESC pressed
-          exited = true;
-          break;
-        }
-      }
-    }
     // Draw
     clear_screen();
 
-    draw_border();
+    read_input();
 
+    if (command_mode) {
+      process_command_input();
+    } else {
+      process_input();
+    }
+
+    draw_border();
     draw_drawable(player);
 
+    if (command_mode) {
+      draw_command_mode_info();
+    }
     print_frame_info();
     print_input_info();
 
