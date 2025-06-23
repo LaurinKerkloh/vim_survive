@@ -1,5 +1,5 @@
-#ifndef TIMING_H
-#define TIMING_H
+#ifndef timing_h
+#define timing_h
 #include <stdbool.h>
 #include <stdint.h>
 

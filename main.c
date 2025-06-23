@@ -1,4 +1,5 @@
 #include "lib/frame_info.h"
+#include "lib/terminalio.h"
 #include "lib/timing.h"
 #include <ctype.h>
 #include <fcntl.h>
@@ -7,7 +8,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
+#include <string.h>
 #include <termios.h>
 #include <unistd.h>
 
@@ -18,7 +19,6 @@
 #define INPUT_BUFFER_SIZE 20
 #define INPUT_CHAIN_SIZE 6
 #define COMMAND_CHAIN 10
-#define OUTPUT_BUFFER_SIZE 16384
 #define GAME_WIDTH 60
 #define GAME_HEIGHT 30
 
@@ -38,6 +38,13 @@
 #define BLINKING 5
 #define STRIKETHROUGH 9
 
+#define UNSET_BOLD 22
+#define UNSET_DIM 22
+#define UNSET_ITALIC 23
+#define UNSET_UNDERLINE 24
+#define UNSET_BLINKING 25
+#define UNSET_STRIKETHROUGH 29
+
 // COLORS
 #define BACKGROUND(c) (c + 10)
 #define BLACK 30
@@ -50,18 +57,12 @@
 #define WHITE 37
 #define DEFAULT 39
 
-#define FULL_BLOCK "\xE2\x96\x88\0"
 #define SMILING_FACE "\xE2\x98\xBB\0"
 #define SQUARE "\xE2\x96\xA0\0"
 
 struct Vector {
   int32_t x;
   int32_t y;
-};
-
-struct Display {
-  char character[5];
-  char modes[10];
 };
 
 struct Drawable {
@@ -72,9 +73,6 @@ struct Drawable {
 //////////////////////
 // Global Variables //
 //////////////////////
-char output_buffer[OUTPUT_BUFFER_SIZE];
-struct termios original_termios;
-int flags;
 struct Vector screen_size;
 
 struct FrameInfo recent_frames_data[RECENT_FRAMES_SIZE];
@@ -87,97 +85,14 @@ char last_input[INPUT_BUFFER_SIZE];
 // TERMINAL AND IO SETTINGS //
 //////////////////////////////
 
-void set_output_buffer(void) {
-  setvbuf(stdout, output_buffer, _IOFBF, OUTPUT_BUFFER_SIZE);
-}
-
-void set_blocking_input(void) {
-  fcntl(STDIN_FILENO, F_SETFL, flags & ~O_NONBLOCK);
-}
-
-void set_non_blocking_input(void) {
-  fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
-}
-
-void restore_terminal(void) {
-  tcsetattr(STDIN_FILENO, TCSAFLUSH, &original_termios);
-  set_blocking_input();
-
-  // show cursor
-  printf("\033[?25h");
-  fflush(stdout);
-}
-
-void configure_terminal(void) {
-  tcgetattr(STDIN_FILENO, &original_termios);
-  flags = fcntl(STDIN_FILENO, F_GETFL, 0);
-
-  atexit(restore_terminal);
-
-  struct termios changed = original_termios;
-  changed.c_iflag &= ~(IXON | ICRNL);
-  changed.c_oflag &= ~(OPOST);
-  changed.c_lflag &= ~(ICANON | ECHO | IEXTEN | ISIG);
-  changed.c_cc[VMIN] = 1;
-  changed.c_cc[VTIME] = 0;
-  tcsetattr(STDIN_FILENO, TCSAFLUSH, &changed);
-
-  set_non_blocking_input();
-  set_output_buffer();
-  // hide cursor
-  printf("\033[?25l");
-  fflush(stdout);
-}
-
-void set_screen_size(void) {
-  set_blocking_input();
-  // Move cursor to bottom right as far as possible
-  printf("\033[9999;9999H");
-  // Ask for cursor position
-  printf("\033[6n");
-  fflush(stdout);
-
-  // Read response from stdin
-  char in[100];
-  uint16_t each = 0;
-  char ch = 0;
-
-  while ((ch = getchar()) != 'R') {
-    if (ch == EOF) {
-      break;
-    }
-    if (isprint(ch)) {
-      if (each + 1 < sizeof(in)) {
-        in[each] = ch;
-        each++;
-        in[each] = '\0';
-      }
-    }
-  }
-  printf("\033[1;1H");
-
-  screen_size.x = 0;
-  screen_size.y = 0;
-
-  sscanf(in, "[%d;%d", &screen_size.y, &screen_size.x);
-
-  set_non_blocking_input();
-}
-
 ///////////////////////////////////////////////
 
 char input_chain[INPUT_CHAIN_SIZE];
 
-void clear_screen(void) { printf("\033[2J\033[1;1H"); }
-
-void move_cursor_vector(struct Vector v) { printf("\033[%d;%dH", v.y, v.x); }
-void move_cursor(uint16_t x, uint16_t y) { printf("\033[%d;%dH", y, x); }
-
 void print_frame_info(void) {
-  move_cursor(screen_size.x - 8, 1);
-  printf("FPS :%4ld", average_fps(&frame_info));
-  move_cursor(screen_size.x - 8, 2);
-  printf("Load:%3ld%%", average_active_time(&frame_info) * 100 / FRAME_TIME);
+  draw_string(screen_size.x - 9, 0, "", "FPS :%4ld", average_fps(&frame_info));
+  draw_string(screen_size.x - 9, 1, "", "Load:%3ld%%",
+              average_active_time(&frame_info) * 100 / FRAME_TIME);
 }
 
 ////////////////
@@ -189,8 +104,9 @@ bool command_mode = false;
 struct Vector level_size = {GAME_WIDTH, GAME_HEIGHT};
 struct Vector game_offset;
 
-struct Drawable player = {{.x = 10, .y = 10},
-                          {.character = SQUARE, .modes = {GREEN, '\0'}}};
+struct Drawable player = {
+    {.x = GAME_WIDTH / 2, .y = GAME_HEIGHT / 2},
+    {.character = SQUARE, .modes = {GREEN, BACKGROUND(RED), '\0'}}};
 
 bool set_game_offset(void) {
   if (level_size.x * 2 > screen_size.x || level_size.y > screen_size.y) {
@@ -206,35 +122,12 @@ struct Vector game_vector_to_terminal(struct Vector game) {
   return p;
 }
 
-void move_cursor_game(int16_t x, int16_t y) {
-  move_cursor_vector(game_vector_to_terminal((struct Vector){x, y}));
-}
-void move_cursor_game_vector(struct Vector p) {
-  move_cursor_vector(game_vector_to_terminal(p));
-}
-
-void draw_drawable(struct Drawable drawable) {
-  move_cursor_game_vector(drawable.position);
-
-  printf("\033[");
-  for (uint8_t i = 0; drawable.display.modes[i] != '\0'; i++) {
-    printf("%d", drawable.display.modes[i]);
-    if (drawable.display.modes[i + 1] != '\0') {
-      printf(";");
-    }
-  }
-  printf("m");
-  printf("%s", drawable.display.character);
-  printf("\033[0m");
-}
-
 void draw_border(void) {
-  for (int x = -1; x <= level_size.x + 1; x++) {
-    for (int y = -1; y <= level_size.y + 1; y++) {
-      if (x == -1 || x == level_size.x + 1 || y == -1 ||
-          y == level_size.y + 1) {
-        move_cursor_game(x, y);
-        printf("%s", FULL_BLOCK);
+  for (int x = 0; x < level_size.x + 1; x++) {
+    for (int y = 0; y < level_size.y + 1; y++) {
+      if (x == 0 || x == level_size.x || y == 0 || y == level_size.y) {
+        draw_display(x + game_offset.x, y + game_offset.y,
+                     (struct Display){" ", {BACKGROUND(WHITE), '\0'}});
       }
     }
   }
@@ -281,50 +174,19 @@ bool try_player_move(struct Vector vector) {
   return true;
 }
 
-int input_chain_end_index(void) {
-  for (int i = 0; i < INPUT_CHAIN_SIZE; i++) {
-    if (input_chain[i] == '\0') {
-      return i;
-    }
-  }
-  return -1;
-}
-
-int shift_input_chain(void) {
-  if (input_chain[0] == '\0') {
-    return 0;
-  }
-  for (int i = 1; i < INPUT_CHAIN_SIZE; i++) {
-    input_chain[i - 1] = input_chain[i];
-    if (input_chain[i] == '\0') {
-      return i - 1;
-    }
-  }
-  return -1;
-}
-
 void add_to_input_chain(char c) {
-  int end_index = input_chain_end_index();
-  if (end_index >= INPUT_CHAIN_SIZE - 1) {
-    end_index = shift_input_chain();
+  if (strlen(input_chain) >= INPUT_CHAIN_SIZE - 1) {
+    for (uint8_t i = 0; i < strlen(input_chain); i++) {
+      input_chain[i] = input_chain[i + 1];
+    }
   }
-  input_chain[end_index] = c;
-  input_chain[end_index + 1] = '\0';
+
+  uint8_t length = strlen(input_chain);
+  input_chain[length] = c;
+  input_chain[length + 1] = '\0';
 }
 
 void clear_input_chain(void) { input_chain[0] = '\0'; }
-
-void read_input(void) {
-  ssize_t read_bytes =
-      read(STDIN_FILENO, input_buffer, sizeof(input_buffer) - 1);
-  if (read_bytes <= 0) {
-    input_buffer[0] = '\0';
-  }
-  for (ssize_t i = 0; i < read_bytes; i++) {
-    last_input[i] = input_buffer[i];
-    last_input[i + 1] = '\0';
-  }
-}
 
 void process_input(void) {
   for (ssize_t i = 0; input_buffer[i] != '\0'; i++) {
@@ -332,12 +194,6 @@ void process_input(void) {
       add_to_input_chain(input_buffer[i]);
     } else {
       switch (input_buffer[i]) {
-      case CTRL_KEY('r'):
-        set_screen_size();
-        break;
-      case CTRL_KEY('q'):
-        exited = true;
-        break;
       case 'h':
         try_player_move(vector_from_direction(LEFT, 1));
         break;
@@ -372,6 +228,10 @@ void process_command_input(void) {
     case 'q':
       exited = true;
       break;
+    case 'r':
+      // TODO:
+      // set_screen_size();
+      break;
     case ESC: // escape char
       switch (input_buffer[i + 1]) {
       case '[':
@@ -384,51 +244,75 @@ void process_command_input(void) {
   }
 }
 
-void print_input_info(void) {
-  move_cursor(1, 1);
+void print_command_mode_info(void) {
+  int height = screen_size.y / 2;
+  int width = screen_size.x / 2;
+  int top = screen_size.y / 2 - height / 2;
+  int left = screen_size.x / 2 - width / 2;
 
-  printf("Last Input: ");
-  for (uint8_t i = 0; i < sizeof(last_input); i++) {
-    if (last_input[i] == '\0') {
-      break;
-    }
-    if (isprint(last_input[i])) {
-      printf("%d (%c) ", last_input[i], last_input[i]);
-    } else {
-      printf("%d ", last_input[i]);
+  for (int y = 0; y < height; y++) {
+    for (int x = 0; x < width; x++) {
+      draw_display(left + x, top + y,
+                   (struct Display){" ", {BACKGROUND(WHITE), BLACK, '\0'}});
     }
   }
 
-  move_cursor(1, 2);
-  printf("Chain length: %d", input_chain_end_index());
-  move_cursor(1, 3);
-  printf("Chain: %s", input_chain);
+  draw_string(left + (width - 6) / 2, top + 1,
+              (char[]){BACKGROUND(WHITE), BLACK, BOLD, '\0'}, "PAUSED");
+  draw_string(left + (width - 14) / 2, top + 3,
+              (char[]){BACKGROUND(WHITE), BLACK, '\0'}, "  r: resize screen");
+  draw_string(left + (width - 14) / 2, top + 4,
+              (char[]){BACKGROUND(WHITE), BLACK, '\0'}, "  q:    quit");
+  draw_string(left + (width - 14) / 2, top + 5,
+              (char[]){BACKGROUND(WHITE), BLACK, '\0'}, "ESC:  continue");
 }
 
-int main(void) {
-  setlocale(LC_ALL, "");
-  configure_terminal();
-  clear_screen();
+// void print_input_info(void) {
+//   char string[10];
+//   draw_string(1, 1, "Last Input: ", "");
+//   for (uint8_t i = 0; i < sizeof(last_input); i++) {
+//     if (last_input[i] == '\0') {
+//       break;
+//     }
+//     if (isprint(last_input[i])) {
+//       sprintf(string, "%d (%c) ", last_input[i], last_input[i]);
+//     } else {
+//       sprintf(string, "%d ", last_input[i]);
+//     }
+//
+//   }
+//
+//   move_cursor(1, 2);
+//   printf("Chain length: %lu", strlen(input_chain));
+//   move_cursor(1, 3);
+//   printf("Chain: %s", input_chain);
+// }
 
-  set_screen_size();
+int main(void) {
+
+  // TODO: this in termminalio?
+  setlocale(LC_ALL, "");
+
+  unsigned int screen_size_x, screen_size_y;
+  init_terminalio(&screen_size_x, &screen_size_y);
+  screen_size.x = (int64_t)screen_size_x;
+  screen_size.y = (int64_t)screen_size_y;
+
   set_game_offset();
 
-  move_cursor(1, 1);
-  printf("Screen Size: %d, %d", screen_size.x, screen_size.y);
-  move_cursor(1, 2);
-  printf("Game Offset: %d, %d", game_offset.x, game_offset.y);
-  fflush(stdout);
-  sleep(2);
+  // move_cursor(1, 1);
+  // printf("Screen Size: %d, %d", screen_size.x, screen_size.y);
+  // move_cursor(1, 2);
+  // printf("Game Offset: %d, %d", game_offset.x, game_offset.y);
+  // fflush(stdout);
+  // sleep(2);
 
   frame_info =
       initialize_frame_info_buffer(recent_frames_data, RECENT_FRAMES_SIZE);
 
   while (!exited) {
     frame_info.current_frame->start = now();
-    // Draw
-    clear_screen();
-
-    read_input();
+    read_input(input_buffer, sizeof(input_buffer));
 
     if (command_mode) {
       process_command_input();
@@ -437,15 +321,17 @@ int main(void) {
     }
 
     draw_border();
-    draw_drawable(player);
+    draw_display(player.position.x + game_offset.x,
+                 player.position.y + game_offset.y, player.display);
 
     if (command_mode) {
-      draw_command_mode_info();
+      print_command_mode_info();
     }
-    print_frame_info();
-    print_input_info();
 
-    fflush(stdout);
+    print_frame_info();
+    // print_input_info();
+
+    render_frame();
 
     // Frame end
     frame_info.current_frame->end = now();
