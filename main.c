@@ -19,8 +19,8 @@
 #define INPUT_BUFFER_SIZE 20
 #define INPUT_CHAIN_SIZE 6
 #define COMMAND_CHAIN 10
-#define GAME_WIDTH 60
-#define GAME_HEIGHT 30
+#define GAME_WIDTH 10
+#define GAME_HEIGHT 5
 
 #define UP 0
 #define DOWN 1
@@ -30,32 +30,7 @@
 #define CTRL_KEY(k) ((k) & 0x1f)
 #define ESC 27
 
-// OUTPUT MODES
-#define BOLD 1
-#define DIM 2
-#define ITALIC 3
-#define UNDERLINE 4
-#define BLINKING 5
-#define STRIKETHROUGH 9
-
-#define UNSET_BOLD 22
-#define UNSET_DIM 22
-#define UNSET_ITALIC 23
-#define UNSET_UNDERLINE 24
-#define UNSET_BLINKING 25
-#define UNSET_STRIKETHROUGH 29
-
 // COLORS
-#define BACKGROUND(c) (c + 10)
-#define BLACK 30
-#define RED 31
-#define GREEN 32
-#define YELLOW 33
-#define BLUE 34
-#define MAGENTA 35
-#define CYAN 36
-#define WHITE 37
-#define DEFAULT 39
 
 #define SMILING_FACE "\xE2\x98\xBB\0"
 #define SQUARE "\xE2\x96\xA0\0"
@@ -90,9 +65,9 @@ char last_input[INPUT_BUFFER_SIZE];
 char input_chain[INPUT_CHAIN_SIZE];
 
 void print_frame_info(void) {
-  draw_string(screen_size.x - 9, 0, "", "FPS :%4ld", average_fps(&frame_info));
-  draw_string(screen_size.x - 9, 1, "", "Load:%3ld%%",
-              average_active_time(&frame_info) * 100 / FRAME_TIME);
+  // draw_string(screen_size.x - 9, 0, "FPS :%4ld", average_fps(&frame_info));
+  // draw_string(screen_size.x - 9, 1, "Load:%3ld%%",
+  //             average_active_time(&frame_info) * 100 / FRAME_TIME);
 }
 
 ////////////////
@@ -104,9 +79,7 @@ bool command_mode = false;
 struct Vector level_size = {GAME_WIDTH, GAME_HEIGHT};
 struct Vector game_offset;
 
-struct Drawable player = {
-    {.x = GAME_WIDTH / 2, .y = GAME_HEIGHT / 2},
-    {.character = SQUARE, .modes = {GREEN, BACKGROUND(RED), '\0'}}};
+struct Drawable player;
 
 bool set_game_offset(void) {
   if (level_size.x * 2 > screen_size.x || level_size.y > screen_size.y) {
@@ -122,16 +95,16 @@ struct Vector game_vector_to_terminal(struct Vector game) {
   return p;
 }
 
-void draw_border(void) {
-  for (int x = 0; x < level_size.x + 1; x++) {
-    for (int y = 0; y < level_size.y + 1; y++) {
-      if (x == 0 || x == level_size.x || y == 0 || y == level_size.y) {
-        draw_display(x + game_offset.x, y + game_offset.y,
-                     (struct Display){" ", {BACKGROUND(WHITE), '\0'}});
-      }
-    }
-  }
-}
+// void draw_border(void) {
+//   for (int x = 0; x < level_size.x + 1; x++) {
+//     for (int y = 0; y < level_size.y + 1; y++) {
+//       if (x == 0 || x == level_size.x || y == 0 || y == level_size.y) {
+//         draw_display(x + game_offset.x, y + game_offset.y,
+//                      (struct Display){" ", {BACKGROUND(WHITE), '\0'}});
+//       }
+//     }
+//   }
+// }
 
 struct Vector vector_from_direction(uint8_t direction, uint8_t distance) {
   struct Vector result;
@@ -250,21 +223,20 @@ void print_command_mode_info(void) {
   int top = screen_size.y / 2 - height / 2;
   int left = screen_size.x / 2 - width / 2;
 
+  struct Style style = color_style(color_8(BLACK), color_8(WHITE));
   for (int y = 0; y < height; y++) {
     for (int x = 0; x < width; x++) {
-      draw_display(left + x, top + y,
-                   (struct Display){" ", {BACKGROUND(WHITE), BLACK, '\0'}});
+      draw_display(left + x, top + y, (struct Display){" ", style});
     }
   }
 
-  draw_string(left + (width - 6) / 2, top + 1,
-              (char[]){BACKGROUND(WHITE), BLACK, BOLD, '\0'}, "PAUSED");
-  draw_string(left + (width - 14) / 2, top + 3,
-              (char[]){BACKGROUND(WHITE), BLACK, '\0'}, "  r: resize screen");
-  draw_string(left + (width - 14) / 2, top + 4,
-              (char[]){BACKGROUND(WHITE), BLACK, '\0'}, "  q:    quit");
-  draw_string(left + (width - 14) / 2, top + 5,
-              (char[]){BACKGROUND(WHITE), BLACK, '\0'}, "ESC:  continue");
+  change_modes(&style, 1, BOLD);
+  draw_styled_string(left + (width - 6) / 2, top + 1, style, "PAUSED");
+  change_modes(&style, 0);
+  draw_styled_string(left + (width - 14) / 2, top + 3, style,
+                     "  r: resize screen");
+  draw_styled_string(left + (width - 14) / 2, top + 4, style, "  q:    quit");
+  draw_styled_string(left + (width - 14) / 2, top + 5, style, "ESC:  continue");
 }
 
 // void print_input_info(void) {
@@ -290,8 +262,10 @@ void print_command_mode_info(void) {
 
 int main(void) {
 
-  // TODO: this in termminalio?
+  // TODO: this in terminalio?
   setlocale(LC_ALL, "");
+
+  struct Display d = {"o", default_style()};
 
   unsigned int screen_size_x, screen_size_y;
   init_terminalio(&screen_size_x, &screen_size_y);
@@ -307,6 +281,11 @@ int main(void) {
   // fflush(stdout);
   // sleep(2);
 
+  player.position.x = GAME_WIDTH / 2;
+  player.position.y = GAME_HEIGHT / 2;
+  player.display = (struct Display){
+      SQUARE, color_style(color_rgb(255, 23, 46), default_color())};
+
   frame_info =
       initialize_frame_info_buffer(recent_frames_data, RECENT_FRAMES_SIZE);
 
@@ -320,12 +299,17 @@ int main(void) {
       process_input();
     }
 
-    draw_border();
-    draw_display(player.position.x + game_offset.x,
-                 player.position.y + game_offset.y, player.display);
+    // struct Display d = {"o", color_style(color_8(RED), color_8(GREEN))};
+    for (int x = 0; x < screen_size.x - 1; x++) {
+      for (int y = 0; y < screen_size.y - 1; y++) {
+        draw_display(x, y, d);
+      }
+    }
+
+    draw_display(player.position.x, player.position.y, player.display);
 
     if (command_mode) {
-      print_command_mode_info();
+      // print_command_mode_info();
     }
 
     print_frame_info();
