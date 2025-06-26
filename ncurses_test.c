@@ -1,8 +1,10 @@
 #include <ncurses.h>
+#include <unistd.h>
 
 int main(void) {
   int rows, cols;
 
+  printf("START");
   // Initialize ncurses
   initscr();
   noecho();
@@ -12,8 +14,8 @@ int main(void) {
   getmaxyx(stdscr, rows, cols);
 
   // Fill the screen with 'o'
-  for (int y = 0; y < rows; y++) {
-    for (int x = 0; x < cols; x++) {
+  for (int x = 0; x < cols; x++) {
+    for (int y = 0; y < rows; y++) {
       mvaddch(y, x, 'o');
     }
   }
@@ -21,11 +23,10 @@ int main(void) {
   // Refresh to show changes
   refresh();
 
-  // Wait for user input before exiting
-  getch();
+  sleep(3);
 
   // End ncurses mode
   endwin();
-
+  printf("END");
   return 0;
 }
