@@ -300,8 +300,8 @@ int main(void) {
     }
 
     // struct Display d = {"o", color_style(color_8(RED), color_8(GREEN))};
-    for (int x = 0; x < screen_size.x - 1; x++) {
-      for (int y = 0; y < screen_size.y - 1; y++) {
+    for (int x = 0; x < screen_size.x; x++) {
+      for (int y = 0; y < screen_size.y; y++) {
         draw_display(x, y, d);
       }
     }

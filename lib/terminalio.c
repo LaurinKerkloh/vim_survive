@@ -11,9 +11,7 @@
 #include <termios.h>
 #include <unistd.h>
 
-// TODO: Buffer size? output still has gaps even with small buffer
-// terminal still overwhelmed?
-#define OUTPUT_BUFFER_SIZE 1024 * 1
+#define OUTPUT_BUFFER_SIZE 1024 * 8
 
 #define COLOR_TYPE_DEFAULT 0
 #define COLOR_TYPE_8 1
@@ -472,7 +470,7 @@ void init_frame_buffers(void) {
 void render_display(unsigned int x, unsigned int y, struct Display d) {
   move_cursor(x, y);
   set_style(d.style);
-  printf("\n%s", d.character);
+  printf("%s", d.character);
 }
 
 /////////////////
