@@ -9,17 +9,33 @@
 #include <stdlib.h>
 #include <string.h>
 #include <termios.h>
+#include <unibilium.h>
 #include <unistd.h>
 
 #define OUTPUT_BUFFER_SIZE 1024 * 8
 
-#define COLOR_TYPE_DEFAULT 0
-#define COLOR_TYPE_8 1
-#define COLOR_TYPE_256 2
-#define COLOR_TYPE_TRUE 3
-
 struct Display **next_frame_buffer, **previous_frame_buffer;
 unsigned int screen_size_x, screen_size_y;
+
+unibi_term *ut;
+
+char *cursor_home;
+
+bool check_terminal_capabilities(void) {
+  const char *term = getenv("TERM");
+  if (!term) {
+    fprintf(stderr, "TERM not set in environment.\n");
+    return false;
+  }
+  ut = unibi_from_term(term);
+  if (!ut) {
+    fprintf(stderr, "Could not load terminfo for terminal '%s'\n", term);
+    return false;
+  }
+
+  const char *truecolor = getenv("COLORTERM");
+  return true;
+}
 
 ////////////////////////////
 // Terminal Configuration //
@@ -48,10 +64,11 @@ void restore_terminal(void) {
 
   printf("\033[0m");
   printf("\033[2J");
-  printf("\033[1;1H");
+  printf("\033[H");
   // show cursor
   printf("\033[?25h\n");
 
+  printf("END");
   fflush(stdout);
 }
 
@@ -92,15 +109,15 @@ bool color_equal(struct Color *a, struct Color *b) {
     return false;
   }
 
-  if (a->type == COLOR_TYPE_DEFAULT) {
+  if (a->type == DEFAULT) {
     return true;
   }
 
-  if (a->type == COLOR_TYPE_256 && a->color == b->color) {
+  if (a->type == _256 && a->color == b->color) {
     return true;
   }
 
-  if (a->type == COLOR_TYPE_TRUE && a->red == b->red && a->green == b->green &&
+  if (a->type == TRUE && a->red == b->red && a->green == b->green &&
       a->blue == b->blue) {
     return true;
   }
@@ -110,7 +127,7 @@ bool color_equal(struct Color *a, struct Color *b) {
 
 struct Color color_rgb(uint8_t r, uint8_t g, uint8_t b) {
   struct Color c;
-  c.type = COLOR_TYPE_TRUE;
+  c.type = TRUE;
   c.red = r;
   c.green = g;
   c.blue = b;
@@ -119,7 +136,7 @@ struct Color color_rgb(uint8_t r, uint8_t g, uint8_t b) {
 
 struct Color color_256(uint8_t color) {
   struct Color c;
-  c.type = COLOR_TYPE_256;
+  c.type = _256;
   c.color = color;
   return c;
 }
@@ -133,21 +150,21 @@ int min(int a, int b) {
 
 struct Color color_256_rgb(uint8_t r, uint8_t g, uint8_t b) {
   struct Color c;
-  c.type = COLOR_TYPE_256;
+  c.type = _256;
   c.color = 16 + 36 * min(r, 5) + 6 * min(g, 5) + min(b, 5);
   return c;
 }
 
 struct Color color_8(uint8_t color) {
   struct Color c;
-  c.type = COLOR_TYPE_8;
+  c.type = _8;
   c.color = min(color, 7);
   return c;
 }
 
 struct Color default_color(void) {
   struct Color c;
-  c.type = COLOR_TYPE_DEFAULT;
+  c.type = DEFAULT;
   return c;
 }
 
@@ -284,7 +301,7 @@ void set_screen_size(void) {
       }
     }
   }
-  printf("\033[1;1H");
+  printf("\033[H");
 
   screen_size_x = 0;
   screen_size_y = 0;
@@ -307,7 +324,7 @@ void reset_display_modes(void) { printf("\033[0m"); }
 
 void color_string(char *string, struct Color *c, bool background) {
   switch (c->type) {
-  case COLOR_TYPE_DEFAULT:
+  case DEFAULT:
     if (background) {
       sprintf(string, "49");
     } else {
@@ -315,21 +332,21 @@ void color_string(char *string, struct Color *c, bool background) {
     }
     break;
 
-  case COLOR_TYPE_8:
+  case _8:
     if (background) {
       sprintf(string, "%d", c->color + 40);
     } else {
       sprintf(string, "%d", c->color + 30);
     }
     break;
-  case COLOR_TYPE_256:
+  case _256:
     if (background) {
       sprintf(string, "48;5;%d", c->color + 40);
     } else {
       sprintf(string, "38;5;%d", c->color + 30);
     }
     break;
-  case COLOR_TYPE_TRUE:
+  case TRUE:
     if (background) {
       sprintf(string, "48:2:%d:%d:%d", c->red, c->green, c->blue);
     } else {
@@ -478,6 +495,7 @@ void render_display(unsigned int x, unsigned int y, struct Display d) {
 /////////////////
 
 void init_terminalio(unsigned int *size_x, unsigned int *size_y) {
+  printf("START");
   configure_terminal();
   clear_screen();
   set_screen_size();

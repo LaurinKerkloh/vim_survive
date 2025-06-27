@@ -1,1 +1,0 @@
-START(B)0[?1049h[1;42r[m[4l[?25l[H[J[2dooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo[3;1H[42;1H[34h[?25h[?1049l[?1l>END
