@@ -3,7 +3,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-// OUTPUT MODES
+//  OUTPUT MODES
+// TODO: enum?
 #define BOLD 1
 #define DIM 2
 #define ITALIC 3
@@ -13,7 +14,8 @@
 #define HIDDEN 8
 #define STRIKETHROUGH 9
 
-// COLOR
+//  COLOR
+// TODO: enum?
 #define BLACK 0
 #define RED 1
 #define GREEN 2
@@ -23,8 +25,10 @@
 #define CYAN 6
 #define WHITE 7
 
+enum ColorType { DEFAULT, _8, _256, TRUE };
+
 struct Color {
-  uint8_t type;
+  enum ColorType type;
   uint8_t color;
   uint8_t red, green, blue;
 };

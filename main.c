@@ -306,7 +306,7 @@ int main(void) {
       }
     }
 
-    draw_display(player.position.x, player.position.y, player.display);
+    // draw_display(player.position.x, player.position.y, player.display);
 
     if (command_mode) {
       // print_command_mode_info();
