@@ -23,8 +23,8 @@ initialize_frame_info_buffer(struct FrameInfo *frame_info, uint16_t size);
 
 void advance_frame_info_buffer(struct FrameInfoBuffer *b);
 
-int64_t average_active_time(struct FrameInfoBuffer *b);
+int average_active_time(struct FrameInfoBuffer *b);
 
-int64_t average_fps(struct FrameInfoBuffer *b);
+int average_fps(struct FrameInfoBuffer *b);
 
 #endif

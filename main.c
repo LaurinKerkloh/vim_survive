@@ -13,9 +13,9 @@
 #include <termios.h>
 #include <unistd.h>
 
-#define FPS 30
-#define FRAME_TIME 1000 / FPS
-#define RECENT_FRAMES_SIZE FPS
+#define FPS 60
+#define FRAME_TIME (1000 / FPS)
+#define RECENT_FRAMES_SIZE FPS * 10
 
 #define INPUT_BUFFER_SIZE 20
 #define INPUT_CHAIN_SIZE 6
@@ -64,9 +64,9 @@ char last_input[INPUT_BUFFER_SIZE];
 char input_chain[INPUT_CHAIN_SIZE];
 
 void print_frame_info(void) {
-  draw_string(get_max_x() - 10, 0, "FPS :%4ld", average_fps(&frame_info));
-  draw_string(get_max_x() - 10, 1, "Load:%3ld%%",
-              average_active_time(&frame_info) * 100 / FRAME_TIME);
+  draw_string(get_max_x() - 10, 1, "Load: %d%%",
+              average_active_time(&frame_info) / FRAME_TIME * 100);
+  draw_string(get_max_x() - 10, 0, "FPS : %d", average_fps(&frame_info));
 }
 
 ////////////////

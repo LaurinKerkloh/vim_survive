@@ -1,4 +1,5 @@
 #include "frame_info.h"
+#include <stdio.h>
 
 struct FrameInfo *initialize_frame_info(struct FrameInfo *frame_info,
                                         uint16_t size) {
@@ -31,7 +32,7 @@ void advance_frame_info_buffer(struct FrameInfoBuffer *b) {
   b->current_frame = &b->frame_info[b->current_frame_index];
 }
 
-int64_t average_active_time(struct FrameInfoBuffer *b) {
+int average_active_time(struct FrameInfoBuffer *b) {
   int64_t total_active_time = 0;
   uint16_t count = 0;
   for (uint16_t i = 0; i < b->length; i++) {
@@ -48,11 +49,19 @@ int64_t average_active_time(struct FrameInfoBuffer *b) {
   return total_active_time / count;
 }
 
-int64_t average_fps(struct FrameInfoBuffer *b) {
-  int64_t minimum_start = 0;
+int average_fps(struct FrameInfoBuffer *b) {
+  int64_t minimum_start = INT64_MAX;
   int64_t maximum_start = 0;
 
+  unsigned int count = 0;
+
   for (uint16_t i = 0; i < b->length; i++) {
+    if (b->frame_info[i].start == -1) {
+      continue;
+    }
+
+    count++;
+
     if (b->frame_info[i].start < minimum_start) {
       minimum_start = b->frame_info[i].start;
     }
@@ -61,7 +70,10 @@ int64_t average_fps(struct FrameInfoBuffer *b) {
     }
   }
 
-  int64_t duration = maximum_start - minimum_start;
+  int duration = maximum_start - minimum_start;
+  if (duration == 0) {
+    return -1;
+  }
 
-  return (b->length - 1 * 1000 / duration);
+  return count * 1000 / duration;
 }
