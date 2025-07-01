@@ -6,6 +6,7 @@
 #include <inttypes.h>
 #include <locale.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -19,8 +20,8 @@
 #define INPUT_BUFFER_SIZE 20
 #define INPUT_CHAIN_SIZE 6
 #define COMMAND_CHAIN 10
-#define GAME_WIDTH 10
-#define GAME_HEIGHT 5
+#define GAME_WIDTH 40
+#define GAME_HEIGHT 20
 
 #define UP 0
 #define DOWN 1
@@ -29,8 +30,6 @@
 
 #define CTRL_KEY(k) ((k) & 0x1f)
 #define ESC 27
-
-// COLORS
 
 #define SMILING_FACE "\xE2\x98\xBB\0"
 #define SQUARE "\xE2\x96\xA0\0"
@@ -65,9 +64,9 @@ char last_input[INPUT_BUFFER_SIZE];
 char input_chain[INPUT_CHAIN_SIZE];
 
 void print_frame_info(void) {
-  // draw_string(screen_size.x - 9, 0, "FPS :%4ld", average_fps(&frame_info));
-  // draw_string(screen_size.x - 9, 1, "Load:%3ld%%",
-  //             average_active_time(&frame_info) * 100 / FRAME_TIME);
+  draw_string(get_max_x() - 10, 0, "FPS :%4ld", average_fps(&frame_info));
+  draw_string(get_max_x() - 10, 1, "Load:%3ld%%",
+              average_active_time(&frame_info) * 100 / FRAME_TIME);
 }
 
 ////////////////
@@ -218,10 +217,10 @@ void process_command_input(void) {
 }
 
 void print_command_mode_info(void) {
-  int height = screen_size.y / 2;
-  int width = screen_size.x / 2;
-  int top = screen_size.y / 2 - height / 2;
-  int left = screen_size.x / 2 - width / 2;
+  int height = get_max_y() / 2;
+  int width = get_max_x() / 2;
+  int top = get_max_y() / 2 - height / 2;
+  int left = get_max_x() / 2 - width / 2;
 
   struct Style style = color_style(color_8(BLACK), color_8(WHITE));
   for (int y = 0; y < height; y++) {
@@ -231,12 +230,11 @@ void print_command_mode_info(void) {
   }
 
   change_modes(&style, 1, BOLD);
-  draw_styled_string(left + (width - 6) / 2, top + 1, style, "PAUSED");
+  draw_sstring(left + (width - 6) / 2, top + 1, style, "PAUSED");
   change_modes(&style, 0);
-  draw_styled_string(left + (width - 14) / 2, top + 3, style,
-                     "  r: resize screen");
-  draw_styled_string(left + (width - 14) / 2, top + 4, style, "  q:    quit");
-  draw_styled_string(left + (width - 14) / 2, top + 5, style, "ESC:  continue");
+  draw_sstring(left + (width - 14) / 2, top + 3, style, "  r: resize screen");
+  draw_sstring(left + (width - 14) / 2, top + 4, style, "  q:    quit");
+  draw_sstring(left + (width - 14) / 2, top + 5, style, "ESC:  continue");
 }
 
 // void print_input_info(void) {
@@ -264,22 +262,7 @@ int main(void) {
 
   // TODO: this in terminalio?
   setlocale(LC_ALL, "");
-
-  struct Display d = {"o", default_style()};
-
-  unsigned int screen_size_x, screen_size_y;
-  init_terminalio(&screen_size_x, &screen_size_y);
-  screen_size.x = (int64_t)screen_size_x;
-  screen_size.y = (int64_t)screen_size_y;
-
-  set_game_offset();
-
-  // move_cursor(1, 1);
-  // printf("Screen Size: %d, %d", screen_size.x, screen_size.y);
-  // move_cursor(1, 2);
-  // printf("Game Offset: %d, %d", game_offset.x, game_offset.y);
-  // fflush(stdout);
-  // sleep(2);
+  init_terminalio();
 
   player.position.x = GAME_WIDTH / 2;
   player.position.y = GAME_HEIGHT / 2;
@@ -299,17 +282,10 @@ int main(void) {
       process_input();
     }
 
-    // struct Display d = {"o", color_style(color_8(RED), color_8(GREEN))};
-    for (int x = 0; x < screen_size.x; x++) {
-      for (int y = 0; y < screen_size.y; y++) {
-        draw_display(x, y, d);
-      }
-    }
-
-    // draw_display(player.position.x, player.position.y, player.display);
+    draw_display(player.position.x, player.position.y, player.display);
 
     if (command_mode) {
-      // print_command_mode_info();
+      print_command_mode_info();
     }
 
     print_frame_info();
@@ -319,9 +295,7 @@ int main(void) {
 
     // Frame end
     frame_info.current_frame->end = now();
-
     wait(until_end_of_frame(frame_info.current_frame->start, FRAME_TIME));
-
     advance_frame_info_buffer(&frame_info);
   }
 

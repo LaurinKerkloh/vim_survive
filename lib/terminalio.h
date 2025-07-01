@@ -3,17 +3,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-//  OUTPUT MODES
-// TODO: enum?
-#define BOLD 1
-#define DIM 2
-#define ITALIC 3
-#define UNDERLINE 4
-#define BLINKING 5
-#define INVERSE 7
-#define HIDDEN 8
-#define STRIKETHROUGH 9
-
 //  COLOR
 // TODO: enum?
 #define BLACK 0
@@ -27,6 +16,22 @@
 
 enum ColorType { DEFAULT, _8, _256, TRUE };
 
+enum OutputMode {
+  BOLD = 1,
+  DIM = 2,
+  ITALIC = 3,
+  UNDERLINE = 4,
+  BLINKING = 5,
+  INVERSE = 7,
+  HIDDEN = 8,
+  STRIKETHROUGH = 9,
+};
+
+struct ModesList {
+  uint8_t count;
+  enum OutputMode modes[10];
+};
+
 struct Color {
   enum ColorType type;
   uint8_t color;
@@ -35,7 +40,7 @@ struct Color {
 
 struct Style {
   struct Color color, background;
-  char modes[10];
+  struct ModesList modes_list;
 };
 
 struct Display {
@@ -43,9 +48,9 @@ struct Display {
   struct Style style;
 };
 
-void init_terminalio(unsigned int *screen_size_x, unsigned int *screen_size_y);
+void init_terminalio(void);
 int draw_display(unsigned int x, unsigned int y, struct Display d);
-int draw_styled_string(int x, int y, struct Style style, char *format, ...);
+int draw_sstring(int x, int y, struct Style style, char *format, ...);
 int draw_string(int x, int y, char *format, ...);
 void render_frame(void);
 
@@ -62,4 +67,9 @@ struct Style color_style(struct Color color, struct Color background);
 struct Style full_style(struct Color color, struct Color background,
                         unsigned int modes_count, ...);
 void change_modes(struct Style *s, unsigned int modes_count, ...);
+
+unsigned int get_max_x(void);
+unsigned int get_max_y(void);
+void get_max_xy(unsigned int *x, unsigned int *y);
+
 #endif

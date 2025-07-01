@@ -43,7 +43,7 @@ int64_t average_active_time(struct FrameInfoBuffer *b) {
     total_active_time += b->frame_info[i].end - b->frame_info[i].start;
   }
   if (count == 0) {
-    return 0;
+    return -1;
   }
   return total_active_time / count;
 }

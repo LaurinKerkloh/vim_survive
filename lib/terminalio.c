@@ -1,5 +1,4 @@
 #include "terminalio.h"
-#include <ctype.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -8,18 +7,25 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <termios.h>
 #include <unibilium.h>
 #include <unistd.h>
 
 #define OUTPUT_BUFFER_SIZE 1024 * 8
 
-struct Display **next_frame_buffer, **previous_frame_buffer;
-unsigned int screen_size_x, screen_size_y;
+struct winsize winsize;
 
+unsigned int buffer_rows, buffer_cols;
+struct Display **next_frame_buffer, **previous_frame_buffer;
+unsigned int screen_size_rows, screen_size_cols;
 unibi_term *ut;
 
-char *cursor_home;
+void append_char(char *string, char c) {
+  unsigned int l = strlen(string);
+  string[l] = c;
+  string[l + 1] = '\0';
+}
 
 bool check_terminal_capabilities(void) {
   const char *term = getenv("TERM");
@@ -27,6 +33,7 @@ bool check_terminal_capabilities(void) {
     fprintf(stderr, "TERM not set in environment.\n");
     return false;
   }
+
   ut = unibi_from_term(term);
   if (!ut) {
     fprintf(stderr, "Could not load terminfo for terminal '%s'\n", term);
@@ -34,8 +41,21 @@ bool check_terminal_capabilities(void) {
   }
 
   const char *truecolor = getenv("COLORTERM");
+  if (!truecolor) {
+    fprintf(stderr, "COLORTERM env not set.\n");
+    return false;
+  }
+
   return true;
 }
+
+void set_screen_size(void) {
+  ioctl(STDOUT_FILENO, TIOCGWINSZ, &winsize);
+  screen_size_rows = winsize.ws_row;
+  screen_size_cols = winsize.ws_col;
+}
+
+void resize_signal(int signal) { set_screen_size(); }
 
 ////////////////////////////
 // Terminal Configuration //
@@ -62,13 +82,10 @@ void restore_terminal(void) {
   tcsetattr(STDIN_FILENO, TCSAFLUSH, &original_termios);
   set_blocking_input();
 
-  printf("\033[0m");
-  printf("\033[2J");
-  printf("\033[H");
-  // show cursor
-  printf("\033[?25h\n");
+  fputs(unibi_get_str(ut, unibi_exit_ca_mode), stdout);
+  fputs(unibi_get_str(ut, unibi_cursor_normal), stdout);
 
-  printf("END");
+  fprintf(stderr, "END");
   fflush(stdout);
 }
 
@@ -95,8 +112,10 @@ void configure_terminal(void) {
 
   set_non_blocking_input();
   set_output_buffer();
-  // hide cursor
-  printf("\033[?25l");
+
+  fputs(unibi_get_str(ut, unibi_enter_ca_mode), stdout);
+  fputs(unibi_get_str(ut, unibi_cursor_invisible), stdout);
+
   fflush(stdout);
 }
 
@@ -113,7 +132,7 @@ bool color_equal(struct Color *a, struct Color *b) {
     return true;
   }
 
-  if (a->type == _256 && a->color == b->color) {
+  if ((a->type == _8 || a->type == _256) && a->color == b->color) {
     return true;
   }
 
@@ -168,15 +187,25 @@ struct Color default_color(void) {
   return c;
 }
 
+void log_color(struct Color c) {
+  fprintf(stderr, "color:\n  type: %d\n", c.type);
+  if (c.type == _256 || c.type == _8) {
+    fprintf(stderr, "  color: %d\n", c.color);
+  }
+  if (c.type == TRUE) {
+    fprintf(stderr, "  r g b: %d %d %d\n", c.red, c.green, c.blue);
+  }
+}
+
 ////////////
 // Styles //
 ////////////
 
-int qsort_char_compare(const void *a, const void *b) {
-  return (*(char *)a - *(char *)b);
+int qsort_output_mode_compare(const void *a, const void *b) {
+  return (*(enum OutputMode *)a - *(enum OutputMode *)b);
 }
 
-char unset_mode(char mode) {
+char unset_mode(enum OutputMode mode) {
   if (mode == BOLD) {
     return 22;
   } else {
@@ -184,23 +213,50 @@ char unset_mode(char mode) {
   }
 }
 
-bool valid_mode(char mode) {
-  return (mode == BOLD || mode == DIM || mode == ITALIC || mode == UNDERLINE ||
-          mode == BLINKING || mode == INVERSE || mode == HIDDEN ||
-          mode == STRIKETHROUGH);
+bool valid_mode(enum OutputMode mode) {
+  switch (mode) {
+  case BOLD:
+  case DIM:
+  case ITALIC:
+  case UNDERLINE:
+  case BLINKING:
+  case INVERSE:
+  case HIDDEN:
+  case STRIKETHROUGH:
+    return true;
+  default:
+    return false;
+  }
+}
+
+struct ModesList empty_modes_list(void) {
+  struct ModesList ml;
+  ml.count = 0;
+  return ml;
+}
+
+bool modes_equal(struct ModesList *a, struct ModesList *b) {
+  if (a->count != b->count)
+    return false;
+
+  for (unsigned int i = 0; i < a->count; i++) {
+    if (a->modes[i] != b->modes[i])
+      return false;
+  }
+  return true;
 }
 
 bool style_equal(struct Style *a, struct Style *b) {
   return (color_equal(&a->color, &b->color) &&
           color_equal(&a->background, &b->background) &&
-          strcmp(a->modes, b->modes) == 0);
+          modes_equal(&a->modes_list, &b->modes_list));
 }
 
 struct Style default_style(void) {
   struct Style s;
   s.color = default_color();
   s.background = default_color();
-  s.modes[0] = '\0';
+  s.modes_list = empty_modes_list();
   return s;
 }
 
@@ -208,38 +264,64 @@ struct Style color_style(struct Color color, struct Color background) {
   struct Style s;
   s.color = color;
   s.background = background;
-  s.modes[0] = '\0';
+  s.modes_list = empty_modes_list();
   return s;
 }
 
-void stringify_modes(char *modes_string, unsigned int modes_count, ...) {
-  modes_string[0] = '\0';
-  uint8_t valid_modes_length = 0;
-
-  va_list modes;
-  va_start(modes, modes_count);
+struct ModesList modes_list(unsigned int modes_count, va_list args) {
+  struct ModesList ml;
+  ml.count = 0;
 
   for (uint8_t i = 0; i < modes_count; i++) {
-    int mode = va_arg(modes, int);
+    enum OutputMode mode = va_arg(args, int);
 
     if (valid_mode(mode)) {
       bool duplicate = false;
-      for (uint8_t x = 0; x < strlen(modes_string); x++) {
-        if (modes_string[x] == mode) {
+      for (uint8_t x = 0; x < ml.count; x++) {
+        if (ml.modes[x] == mode) {
           duplicate = true;
         }
       }
 
       if (!duplicate) {
-        modes_string[valid_modes_length] = mode;
-        modes_string[valid_modes_length + 1] = '\0';
-        valid_modes_length++;
+        ml.modes[ml.count] = mode;
+        ml.count++;
       }
     }
   }
-  va_end(modes);
+  qsort(ml.modes, ml.count, sizeof(enum OutputMode), qsort_output_mode_compare);
+  return ml;
+}
 
-  qsort(modes_string, strlen(modes_string), sizeof(char), qsort_char_compare);
+void remove_mode(struct ModesList *ml, unsigned int index) {
+  ml->count--;
+  for (unsigned int i = index; i < ml->count; i++) {
+    ml->modes[i] = ml->modes[i + 1];
+  }
+}
+
+void add_mode(struct ModesList *ml, enum OutputMode mode) {
+  ml->modes[ml->count] = mode;
+  ml->count++;
+}
+
+void modes_string(char *string, struct ModesList *ml, bool set) {
+  string[0] = '\0';
+  for (unsigned int i = 0; i < ml->count; i++) {
+    char tmp[3];
+
+    if (set) {
+      sprintf(tmp, "%d", ml->modes[i]);
+    } else {
+      sprintf(tmp, "%d", unset_mode(ml->modes[i]));
+    }
+
+    strcat(string, tmp);
+
+    if (!(i == ml->count - 1)) {
+      append_char(string, ';');
+    }
+  }
 }
 
 struct Style full_style(struct Color color, struct Color background,
@@ -250,7 +332,7 @@ struct Style full_style(struct Color color, struct Color background,
 
   va_list args;
   va_start(args, modes_count);
-  stringify_modes(s.modes, modes_count, args);
+  s.modes_list = modes_list(modes_count, args);
   va_end(args);
 
   return s;
@@ -259,7 +341,7 @@ struct Style full_style(struct Color color, struct Color background,
 void change_modes(struct Style *s, unsigned int modes_count, ...) {
   va_list args;
   va_start(args, modes_count);
-  stringify_modes(s->modes, modes_count, args);
+  s->modes_list = modes_list(modes_count, args);
   va_end(args);
 }
 /////////////
@@ -276,48 +358,24 @@ bool display_equal(struct Display *a, struct Display *b) {
 
 struct Style current_style;
 
-void set_screen_size(void) {
-  set_blocking_input();
-  // Move cursor to bottom right as far as possible
-  printf("\033[9999;9999H");
-  // Ask for cursor position
-  printf("\033[6n");
-  fflush(stdout);
+unsigned int cursor_y;
+unsigned int cursor_x;
 
-  // Read response from stdin
-  char in[100];
-  unsigned int each = 0;
-  char ch = 0;
-
-  while ((ch = getchar()) != 'R') {
-    if (ch == EOF) {
-      break;
-    }
-    if (isprint(ch)) {
-      if (each + 1 < sizeof(in)) {
-        in[each] = ch;
-        each++;
-        in[each] = '\0';
-      }
-    }
-  }
-  printf("\033[H");
-
-  screen_size_x = 0;
-  screen_size_y = 0;
-
-  sscanf(in, "[%d;%d", &screen_size_y, &screen_size_x);
-
-  set_non_blocking_input();
+void clear_screen(void) {
+  fputs(unibi_get_str(ut, unibi_clear_screen), stdout);
+  cursor_x = 0;
+  cursor_y = 0;
 }
 
-void clear_screen(void) { printf("\033[2J"); }
-
-// TODO: be more efficient with cursor moves, track position and only move when
-// nececerry
 void move_cursor(unsigned int x, unsigned int y) {
-  // fprintf(stderr, "ESC[%d;%dH\n", y + 1, x + 1);
+  if (x == cursor_x && y == cursor_y) {
+    return;
+  }
+  // TODO: use unibilium string here? or is the ansi standard good enough?
   printf("\033[%d;%dH", y + 1, x + 1);
+
+  cursor_x = x;
+  cursor_y = y;
 }
 
 void reset_display_modes(void) { printf("\033[0m"); }
@@ -356,77 +414,65 @@ void color_string(char *string, struct Color *c, bool background) {
   }
 }
 
-void remove_from_index(char *string, unsigned int index) {
-  for (unsigned int i = index; i < strlen(string); i++) {
-    string[i] = string[i + 1];
-  }
-}
-
-void append_char(char *string, char c) {
-  unsigned int l = strlen(string);
-  string[l] = c;
-  string[l + 1] = '\0';
-}
-
 void set_style(struct Style s) {
-  if (style_equal(&current_style, &s))
+  if (style_equal(&current_style, &s)) {
     return;
-
-  char output_modes[200] = "";
+  }
+  char output_string[200] = "";
   if (!color_equal(&current_style.color, &s.color)) {
     char new_color_string[40];
     color_string(new_color_string, &s.color, false);
-    strcat(output_modes, new_color_string);
+    strcat(output_string, new_color_string);
   }
 
   if (!color_equal(&current_style.background, &s.background)) {
     char new_color_string[40];
     color_string(new_color_string, &s.background, true);
-    if (strlen(output_modes) > 0) {
-      append_char(output_modes, ';');
+    if (strlen(output_string) > 0) {
+      append_char(output_string, ';');
     }
-    strcat(output_modes, new_color_string);
+    strcat(output_string, new_color_string);
   }
 
-  if (strcmp(current_style.modes, s.modes) != 0) {
-    char old_modes[10];
-    strcpy(old_modes, current_style.modes);
+  if (!modes_equal(&current_style.modes_list, &s.modes_list)) {
+    struct ModesList old_modes = current_style.modes_list;
+    struct ModesList new_modes = empty_modes_list();
 
-    char new_modes[10] = "";
-
-    for (uint8_t i = 0; i < strlen(s.modes); i++) {
+    for (uint8_t i = 0; i < s.modes_list.count; i++) {
       bool mode_already_set = false;
-      for (uint8_t j = 0; j < strlen(old_modes); j++) {
-        if (s.modes[i] == old_modes[j]) {
-          remove_from_index(old_modes, j);
+      for (uint8_t j = 0; j < old_modes.count; j++) {
+        if (s.modes_list.modes[i] == old_modes.modes[j]) {
+          remove_mode(&old_modes, j);
           mode_already_set = true;
           break;
         }
       }
 
       if (!mode_already_set) {
-        append_char(new_modes, s.modes[i]);
+        add_mode(&new_modes, s.modes_list.modes[i]);
       }
     }
 
-    // TODO if modes are sorted this check is redundant
-    if (strlen(old_modes) > 0 || strlen(new_modes) > 0) {
-      if (strlen(output_modes) > 0) {
-        append_char(output_modes, ';');
-      }
+    char output_modes_string[20];
 
-      for (uint8_t i = 0; i < strlen(old_modes); i++) {
-        old_modes[i] = unset_mode(old_modes[i]);
+    if (new_modes.count > 0) {
+      if (strlen(output_string) > 0) {
+        append_char(output_string, ';');
       }
+      modes_string(output_modes_string, &new_modes, true);
+      strcat(output_string, output_modes_string);
+    }
 
-      strcat(output_modes, new_modes);
-      strcat(output_modes, old_modes);
+    if (old_modes.count > 0) {
+      if (strlen(output_string) > 0) {
+        append_char(output_string, ';');
+      }
+      modes_string(output_modes_string, &old_modes, false);
+      strcat(output_string, output_modes_string);
     }
   }
 
-  printf("\033[%sm", output_modes);
-
-  fprintf(stderr, "ESC[%sm\n", output_modes);
+  printf("\033[%sm", output_string);
 
   current_style = s;
 }
@@ -469,17 +515,58 @@ void free_frame_buffer(struct Display **buffer, unsigned int rows) {
   free(buffer);
 }
 
+// void resize_frame_buffer(struct Display **buffer, unsigned int current_rows,
+//                          unsigned int current_cols, unsigned int
+//                          change_rows_to, unsigned int change_cols_to) {
+//
+//   if (change_rows_to < current_rows) {
+//     for (unsigned int i = change_rows_to - 1; i < current_rows; i++) {
+//       free(buffer[i]);
+//     }
+//   }
+//
+//   if (change_rows_to != current_rows) {
+//     buffer = realloc(buffer, change_rows_to * sizeof(struct Display *));
+//   };
+//
+//   if (change_rows_to > current_rows) {
+//     for (unsigned int i = current_rows - 1; i < change_rows_to; i++) {
+//       buffer[i] = malloc(change_cols_to * sizeof(struct Display));
+//     }
+//   }
+//
+//   if (change_cols_to != current_cols) {
+//     for (unsigned int i = 0; i < change_rows_to; i++) {
+//       buffer[i] = realloc(buffer[i], change_cols_to * sizeof(struct
+//       Display));
+//     }
+//   }
+// }
+
 void free_frame_buffers(void) {
-  free_frame_buffer(previous_frame_buffer, screen_size_y);
-  free_frame_buffer(next_frame_buffer, screen_size_y);
+  free_frame_buffer(previous_frame_buffer, buffer_rows);
+  free_frame_buffer(next_frame_buffer, buffer_rows);
 }
 
-void init_frame_buffers(void) {
-  previous_frame_buffer = init_frame_buffer(screen_size_y, screen_size_x);
-  next_frame_buffer = init_frame_buffer(screen_size_y, screen_size_x);
+void init_frame_buffers(unsigned int rows, unsigned int cols) {
+  previous_frame_buffer = init_frame_buffer(rows, cols);
+  next_frame_buffer = init_frame_buffer(rows, cols);
+  buffer_rows = rows;
+  buffer_cols = cols;
 
   atexit(free_frame_buffers);
 }
+
+void resize_frame_buffers(unsigned int rows, unsigned int cols) {
+  if (rows == buffer_rows && cols == buffer_cols) {
+    return;
+  }
+
+  free_frame_buffers();
+  init_frame_buffers(rows, cols);
+  clear_screen();
+}
+
 ///////////////////////
 // Render Functions ///
 ///////////////////////
@@ -488,26 +575,32 @@ void render_display(unsigned int x, unsigned int y, struct Display d) {
   move_cursor(x, y);
   set_style(d.style);
   printf("%s", d.character);
+  cursor_x++;
 }
 
 /////////////////
 // Public Api ///
 /////////////////
 
-void init_terminalio(unsigned int *size_x, unsigned int *size_y) {
-  printf("START");
-  configure_terminal();
-  clear_screen();
-  set_screen_size();
-  init_frame_buffers();
-  current_style = default_style();
+void init_terminalio(void) {
+  fprintf(stderr, "START");
+  if (!check_terminal_capabilities()) {
+    exit(-1);
+  }
 
-  *size_x = screen_size_x;
-  *size_y = screen_size_y;
+  configure_terminal();
+
+  clear_screen();
+
+  set_screen_size();
+  signal(SIGWINCH, resize_signal);
+
+  init_frame_buffers(screen_size_rows, screen_size_cols);
+  current_style = default_style();
 }
 
 int draw_display(unsigned int x, unsigned int y, struct Display d) {
-  if (x >= screen_size_x || y >= screen_size_y) {
+  if (x >= buffer_cols || y >= buffer_rows) {
     return -1;
   }
 
@@ -515,7 +608,7 @@ int draw_display(unsigned int x, unsigned int y, struct Display d) {
   return 0;
 }
 
-int draw_styled_string(int x, int y, struct Style style, char *format, ...) {
+int draw_sstring(int x, int y, struct Style style, char *format, ...) {
   char string[100];
   va_list args;
   va_start(args, format);
@@ -541,23 +634,26 @@ int draw_string(int x, int y, char *format, ...) {
   int result;
   va_list args;
   va_start(args, format);
-  result = draw_styled_string(x, y, default_style(), format, args);
+  result = draw_sstring(x, y, default_style(), format, args);
   va_end(args);
   return result;
 }
 
 void render_frame(void) {
-  for (unsigned int y = 0; y < screen_size_y; y++) {
-    for (unsigned int x = 0; x < screen_size_x; x++) {
-      if (!display_equal(&previous_frame_buffer[y][x],
-                         &next_frame_buffer[y][x])) {
-        render_display(x, y, next_frame_buffer[y][x]);
+
+  for (unsigned int row = 0; row < buffer_rows; row++) {
+    for (unsigned int col = 0; col < buffer_cols; col++) {
+      if (!display_equal(&previous_frame_buffer[row][col],
+                         &next_frame_buffer[row][col])) {
+        render_display(col, row, next_frame_buffer[row][col]);
       }
     }
   }
 
-  clear_frame_buffer(previous_frame_buffer, screen_size_y, screen_size_x);
+  clear_frame_buffer(previous_frame_buffer, buffer_rows, buffer_cols);
   switch_frame_buffers();
+
+  resize_frame_buffers(screen_size_rows, screen_size_cols);
 
   fflush(stdout);
 }
@@ -574,4 +670,12 @@ void read_input(char *buf, unsigned int buf_len) {
     buf[i] = buf[i];
     buf[i + 1] = '\0';
   }
+}
+
+unsigned int get_max_x(void) { return buffer_cols; }
+unsigned int get_max_y(void) { return buffer_rows; }
+
+void get_max_xy(unsigned int *x, unsigned int *y) {
+  *x = buffer_cols;
+  *y = buffer_rows;
 }

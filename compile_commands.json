@@ -6,7 +6,9 @@
             "-Wall",
             "-Wextra",
             "-Wpedantic",
-            "main.c"
+            "lib/*.c",
+            "main.c",
+            "-lunibilium"
         ],
         "file": "main.c"
     }
