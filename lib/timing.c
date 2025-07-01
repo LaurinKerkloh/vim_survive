@@ -36,17 +36,6 @@ void wait(int64_t time) {
   nanosleep(&ts, NULL);
 }
 
-bool check_stdin(int64_t timeout) {
-  struct timeval timeout_tv = milliseconds_to_timeval(timeout);
-  fd_set fds;
-  FD_ZERO(&fds);
-  FD_SET(STDIN_FILENO, &fds);
-
-  select(STDIN_FILENO + 1, &fds, NULL, NULL, &timeout_tv);
-
-  return (FD_ISSET(STDIN_FILENO, &fds) != 0);
-}
-
 int64_t until_end_of_frame(int64_t start_time, uint16_t target_frame_time) {
   return target_frame_time - (now() - start_time);
 }
