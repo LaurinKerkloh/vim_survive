@@ -608,12 +608,10 @@ int draw_display(unsigned int x, unsigned int y, struct Display d) {
   return 0;
 }
 
-int draw_sstring(int x, int y, struct Style style, char *format, ...) {
+int draw_sstring_va(int x, int y, struct Style style, char *format,
+                    va_list args) {
   char string[100];
-  va_list args;
-  va_start(args, format);
   vsprintf(string, format, args);
-  va_end(args);
 
   int result;
   for (unsigned int i = 0; i < strlen(string); i++) {
@@ -630,11 +628,18 @@ int draw_sstring(int x, int y, struct Style style, char *format, ...) {
   return 0;
 }
 
-int draw_string(int x, int y, char *format, ...) {
-  int result;
+int draw_sstring(int x, int y, struct Style style, char *format, ...) {
   va_list args;
   va_start(args, format);
-  result = draw_sstring(x, y, default_style(), format, args);
+  int result = draw_sstring_va(x, y, style, format, args);
+  va_end(args);
+  return result;
+}
+
+int draw_string(int x, int y, char *format, ...) {
+  va_list args;
+  va_start(args, format);
+  int result = draw_sstring_va(x, y, default_style(), format, args);
   va_end(args);
   return result;
 }
